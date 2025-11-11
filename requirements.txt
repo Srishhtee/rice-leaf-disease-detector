@@ -1,6 +1,6 @@
-opencv-python-headless
-ultralytics
 streamlit
+ultralytics==8.2.90
 pillow
 torch
 torchvision
+opencv-python-headless==4.9.0.80

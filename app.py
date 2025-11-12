@@ -1,12 +1,12 @@
 import streamlit as st
 from ultralytics import YOLO
 from PIL import Image
-import tempfile, os, glob, time
+import tempfile, os, glob, time, requests
 
-# Page Setup
-st.set_page_config(page_title="Rice Leaf Disease Detector", page_icon="", layout="centered")
+# ------------------ PAGE SETUP ------------------
+st.set_page_config(page_title="Rice Leaf Disease Detector", page_icon="🍃", layout="centered")
 
-# Custom Transparent Style
+# ------------------ STYLING ------------------
 st.markdown("""
 <style>
 [data-testid="stAppViewContainer"] {
@@ -14,10 +14,8 @@ st.markdown("""
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
-    color: #222;  /* 🟢 darker text overall */
+    color: #222;
 }
-
-/* Slight overlay for soft contrast */
 [data-testid="stAppViewContainer"]::before {
     content: "";
     position: absolute;
@@ -25,35 +23,27 @@ st.markdown("""
     background-color: rgba(255, 255, 255, 0.3);
     z-index: -1;
 }
-
-/* 🏷 Title */
 h1 {
     text-align: center;
-    background: linear-gradient(90deg, #8B4513, #654321); /* darker gold-brown */
+    background: linear-gradient(90deg, #8B4513, #654321);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     font-size: 2.8rem;
     font-weight: 800;
     margin-bottom: 0.2rem;
 }
-
-/* 📜 Subtitle */
 .subtitle {
     text-align: center;
-    color: #2f2f2f; /* dark gray for readability */
+    color: #2f2f2f;
     font-size: 1.15rem;
     margin-bottom: 1.8rem;
     font-weight: 600;
 }
-
-/* 📁 File uploader label */
 div[data-testid="stFileUploader"] > label {
-    color: #222; /* darker text */
+    color: #222;
     font-weight: bold;
     font-size: 1.1rem;
 }
-
-/* 🔘 Buttons */
 div.stButton > button {
     background: linear-gradient(90deg, #FFD700, #FFA500);
     color: #222;
@@ -68,60 +58,87 @@ div.stButton > button:hover {
     background: linear-gradient(90deg, #FFA500, #FF8C00);
     transform: scale(1.05);
 }
-
 .stSuccess, .stWarning {
     font-size: 1.1rem !important;
     font-weight: 500 !important;
 }
-
-/* Hide Streamlit footer */
 footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# App Title and Description
+# ------------------ TITLE ------------------
 st.markdown("<h1>Rice Leaf Disease Detection</h1>", unsafe_allow_html=True)
-st.markdown("<p class='subtitle'>Upload a rice leaf image to identify the disease using AI</p>", unsafe_allow_html=True)
+st.markdown("<p class='subtitle'>Upload or capture a rice leaf image to identify disease using AI</p>", unsafe_allow_html=True)
 
-# Load YOLO model
-model_path = "rice_leaf_yolo_model.pt"
-model = YOLO(model_path)
+# ------------------ DOWNLOAD MODEL FROM DRIVE ------------------
+def download_from_drive(file_id, dest_path):
+    """Download model file from Google Drive if not present"""
+    if os.path.exists(dest_path):
+        return
 
-# Upload image
-uploaded_file = st.file_uploader("Upload a rice leaf image...", type=["jpg", "jpeg", "png"])
+    st.info("📥 Downloading model from Google Drive... please wait (takes time on first run).")
 
-if uploaded_file:
+    URL = "https://drive.google.com/uc?export=download"
+    session = requests.Session()
+    response = session.get(URL, params={'id': file_id}, stream=True)
+    response.raise_for_status()
+
+    with open(dest_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=32768):
+            if chunk:
+                f.write(chunk)
+    st.success("✅ Model downloaded successfully!")
+
+# Your Google Drive file ID
+DRIVE_FILE_ID = "1smsUoQLoijhyfqMzjVzJvIVy6wTcYu-7"
+MODEL_PATH = "rice_leaf_yolo_model.pt"
+
+download_from_drive(DRIVE_FILE_ID, MODEL_PATH)
+
+# ------------------ LOAD MODEL ------------------
+@st.cache_resource
+def load_model(path):
+    return YOLO(path)
+
+model = load_model(MODEL_PATH)
+
+# ------------------ IMAGE UPLOAD ------------------
+uploaded_file = st.file_uploader("📂 Upload a rice leaf image...", type=["jpg", "jpeg", "png"])
+
+# ------------------ CAMERA INPUT ------------------
+st.markdown("### Or take a live photo (for Android users):")
+camera_file = st.camera_input("📸 Capture a photo")
+
+# Prioritize camera photo if both are given
+image_source = camera_file if camera_file else uploaded_file
+
+if image_source:
     temp_dir = tempfile.mkdtemp()
-    img_path = os.path.join(temp_dir, uploaded_file.name)
+    img_path = os.path.join(temp_dir, image_source.name)
     with open(img_path, "wb") as f:
-        f.write(uploaded_file.read())
+        f.write(image_source.read())
 
-    st.image(Image.open(img_path), caption="📸 Uploaded Image", use_container_width=True)
-    st.write("Detecting disease... Please wait...")
+    st.image(Image.open(img_path), caption="Uploaded Image", use_container_width=True)
+    st.write("🧠 Detecting disease... please wait...")
 
-    # Predict
-    results = model.predict(source=img_path, conf=0.5, save=True)
+    # Run prediction
+    results = model.predict(source=img_path, conf=0.5, save=True, verbose=False)
 
     # Find latest prediction folder dynamically
     result_dirs = glob.glob("runs/detect/predict*")
-    if result_dirs:
-        latest_dir = max(result_dirs, key=os.path.getctime)
-    else:
-        latest_dir = "runs/detect/predict"
+    latest_dir = max(result_dirs, key=os.path.getctime) if result_dirs else "runs/detect/predict"
 
-    # Wait until YOLO finishes saving output
-    time.sleep(1)
-    res_img_path = os.path.join(latest_dir, os.path.basename(uploaded_file.name))
+    time.sleep(1)  # small delay for saving output
+    res_img_path = os.path.join(latest_dir, os.path.basename(image_source.name))
 
-    # Check if file actually exists
     if os.path.exists(res_img_path):
-        st.image(res_img_path, caption="🩺 Detection Result", use_container_width=True)
+        st.image(res_img_path, caption="Detection Result", use_container_width=True)
     else:
-        st.error("Result image not found. Try uploading again!")
+        st.error("⚠️ Result image not found. Try again!")
 
-    # Get detected class labels
-    labels = [model.names[int(cls)] for cls in results[0].boxes.cls]
-    if labels:
-        st.success(f"Detected Disease: **{', '.join(set(labels))}**")
+    # Detected class labels
+    if results and len(results[0].boxes) > 0:
+        labels = [model.names[int(cls)] for cls in results[0].boxes.cls]
+        st.success(f"🌾 Detected Disease: **{', '.join(set(labels))}**")
     else:
         st.warning("No visible disease detected.")

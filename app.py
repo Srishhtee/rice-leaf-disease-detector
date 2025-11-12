@@ -70,30 +70,27 @@ footer {visibility: hidden;}
 st.markdown("<h1>Rice Leaf Disease Detection</h1>", unsafe_allow_html=True)
 st.markdown("<p class='subtitle'>Upload or capture a rice leaf image to identify disease using AI</p>", unsafe_allow_html=True)
 
-# ------------------ DOWNLOAD MODEL FROM DRIVE ------------------
-def download_from_drive(file_id, dest_path):
-    """Download model file from Google Drive if not present"""
+# ------------------ DOWNLOAD MODEL FROM HUGGING FACE ------------------
+MODEL_URL = "https://huggingface.co/srishteee/rice_leaf_model/resolve/main/rice_leaf_yolo_model.pt"
+MODEL_PATH = "rice_leaf_yolo_model.pt"
+
+def download_model(url, dest_path):
+    """Download model from Hugging Face if not already present"""
     if os.path.exists(dest_path):
         return
 
-    st.info("📥 Downloading model from Google Drive... please wait (takes time on first run).")
-
-    URL = "https://drive.google.com/uc?export=download"
-    session = requests.Session()
-    response = session.get(URL, params={'id': file_id}, stream=True)
+    st.info("📥 Downloading model from Hugging Face... please wait (first time only).")
+    response = requests.get(url, stream=True)
     response.raise_for_status()
 
     with open(dest_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=32768):
+        for chunk in response.iter_content(chunk_size=8192):
             if chunk:
                 f.write(chunk)
+
     st.success("✅ Model downloaded successfully!")
 
-# Your Google Drive file ID
-DRIVE_FILE_ID = "1smsUoQLoijhyfqMzjVzJvIVy6wTcYu-7"
-MODEL_PATH = "rice_leaf_yolo_model.pt"
-
-download_from_drive(DRIVE_FILE_ID, MODEL_PATH)
+download_model(MODEL_URL, MODEL_PATH)
 
 # ------------------ LOAD MODEL ------------------
 @st.cache_resource
@@ -109,7 +106,7 @@ uploaded_file = st.file_uploader("📂 Upload a rice leaf image...", type=["jpg"
 st.markdown("### Or take a live photo (for Android users):")
 camera_file = st.camera_input("📸 Capture a photo")
 
-# Prioritize camera photo if both are given
+# ------------------ PREDICTION ------------------
 image_source = camera_file if camera_file else uploaded_file
 
 if image_source:
@@ -121,14 +118,13 @@ if image_source:
     st.image(Image.open(img_path), caption="Uploaded Image", use_container_width=True)
     st.write("🧠 Detecting disease... please wait...")
 
-    # Run prediction
+    # Run YOLO prediction
     results = model.predict(source=img_path, conf=0.5, save=True, verbose=False)
 
-    # Find latest prediction folder dynamically
+    # Find latest result image
     result_dirs = glob.glob("runs/detect/predict*")
     latest_dir = max(result_dirs, key=os.path.getctime) if result_dirs else "runs/detect/predict"
-
-    time.sleep(1)  # small delay for saving output
+    time.sleep(1)
     res_img_path = os.path.join(latest_dir, os.path.basename(image_source.name))
 
     if os.path.exists(res_img_path):
@@ -136,7 +132,7 @@ if image_source:
     else:
         st.error("⚠️ Result image not found. Try again!")
 
-    # Detected class labels
+    # Display detected classes
     if results and len(results[0].boxes) > 0:
         labels = [model.names[int(cls)] for cls in results[0].boxes.cls]
         st.success(f"🌾 Detected Disease: **{', '.join(set(labels))}**")
